@@ -24,6 +24,13 @@ import numpy as np
 # Suppress non-critical OpenCV internal DNN graph warnings for a clean CLI
 if hasattr(cv2, "utils") and hasattr(cv2.utils, "logging"):
     cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -35,7 +42,7 @@ try:
 except ImportError:
     _VAULT_AVAILABLE = False
 
-console = Console()
+console = Console(legacy_windows=False)
 
 # Base directories
 BASE_DIR = Path(__file__).resolve().parent
@@ -500,6 +507,8 @@ class FaceAuthenticatorCLI:
             cap.release()
             if display_window:
                 cv2.destroyAllWindows()
+                for _ in range(4):
+                    cv2.waitKey(1)
 
     def enroll_interactive(self, username: str) -> bool:
         """CLI interactive face enrollment procedure."""

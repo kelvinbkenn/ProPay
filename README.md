@@ -253,17 +253,20 @@ Run the full deterministic unit and security test suite:
 python -m unittest discover tests -v
 ```
 
-### Test Coverage Summary (26 Tests Passing):
+### Test Coverage Summary (47 Tests Passing):
 - ✅ **Biometric Face Engine (`test_face_scan.py`)**: 6 tests validating YuNet detection, SFace 128-D embeddings, cosine similarity thresholds, passive anti-spoofing blur/blank rejection, and template integrity.
+- ✅ **Constant-Time PIN & Rate Limiter (`test_pin_auth.py`)**: 11 tests validating PIN strength policies, PBKDF2-HMAC-SHA256 salting, constant-time verification, non-existent user dummy timing defense, exponential rate limiter, and 3-failure lockout trigger.
 - ✅ **Dynamic Signed QR (`test_qr_scanner.py`)**: 10 tests validating key persistence, payload HMAC-SHA256 signing, amount tampering rejection, VPA tampering rejection, nonce replay prevention, expiry defense, UTF-8 half-block ASCII rendering, and OpenCV image roundtrip.
+- ✅ **AES-256-GCM Vault (`test_crypto_vault.py`)**: 7 tests validating CSPRNG root key generation, AEAD tag tampering detection, identity substitution defense via Associated Data, 128-D biometric template fidelity, and vault-wide cryptographic audits.
 - ✅ **Cryptographic Ledger & Merkle Tree (`test_ledger.py`)**: 10 tests validating Genesis anchor, sequential hash chaining, canonical hash recalculation, broken prev_hash detection, Merkle tree root determinism, O(log N) inclusion proofs, counterfeit proof rejection, balance tracking, overdraft defense, and disk reload integrity.
+- ✅ **End-to-End Payment Loop (`test_end_to_end_loop.py`)**: 3 tests validating the complete payment cycle (Dynamic QR Generation $\to$ Scanner Verification $\to$ Biometric Face Auth $\to$ PIN Auth $\to$ Nonce Invalidation $\to$ Merkle Ledger Commitment $\to$ Proof Verification).
 
 ---
 
 ## 🗺️ Roadmap
 - [x] **Part 1**: Biometric Face Scan & Liveness Engine (`face_scan.py`)
-- [ ] **Part 2**: Hardened Constant-Time PIN Authentication & Rate Limiter (`pin_auth.py`)
+- [x] **Part 2**: Hardened Constant-Time PIN Authentication & Rate Limiter (`pin_auth.py`)
 - [x] **Part 3**: Cryptographically Signed Dynamic QR Code Generator & Scanner (`qr_scanner.py`)
-- [ ] **Part 4**: AES-256-GCM Encrypted Vault & Key Management (`crypto_vault.py`)
+- [x] **Part 4**: AES-256-GCM Encrypted Vault & Key Management (`crypto_vault.py`)
 - [x] **Part 5**: Cryptographic Transaction Ledger & Merkle Audit Trail (`ledger.py`)
 - [x] **Part 6**: Unified Interactive Rich CLI Application (`main.py`)

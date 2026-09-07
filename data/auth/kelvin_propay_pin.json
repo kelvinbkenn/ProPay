@@ -9,7 +9,7 @@
   "failed_attempts": 0,
   "lockout_until": 0.0,
   "last_failed_at": null,
-  "last_success_at": null,
+  "last_success_at": 1788808440.8972392,
   "total_failures": 0,
-  "total_successes": 0
+  "total_successes": 9
 }

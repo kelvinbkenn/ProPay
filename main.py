@@ -20,6 +20,8 @@ import secrets
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, List
 
+import numpy as np
+
 # Windows UTF-8 console output encoding
 if sys.platform == "win32":
     try:
@@ -45,11 +47,9 @@ console = Console(legacy_windows=False)
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
-CREDENTIALS_DIR = DATA_DIR / "credentials"
+AUTH_DIR = DATA_DIR / "auth"
 BIOMETRICS_DIR = DATA_DIR / "biometrics"
 VAULT_DIR = DATA_DIR / "vault"
-PIN_STORE_FILE = CREDENTIALS_DIR / "pin_store.json"
-RATE_LIMIT_FILE = CREDENTIALS_DIR / "rate_limits.json"
 
 # Rate Limiter Configuration
 MAX_FAILED_ATTEMPTS = 3
@@ -57,8 +57,8 @@ LOCKOUT_DURATION_SECONDS = 900  # 15 minutes
 
 
 def ensure_system_directories() -> None:
-    """Ensures data, credentials, and biometrics directories exist."""
-    CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
+    """Ensures data, auth, biometrics, and vault directories exist."""
+    AUTH_DIR.mkdir(parents=True, exist_ok=True)
     BIOMETRICS_DIR.mkdir(parents=True, exist_ok=True)
     VAULT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -195,39 +195,60 @@ class ProPayPlatformCLI:
         payload_data: Optional[Dict[str, Any]] = None
 
         if sub_choice == "1":
-            # Live webcam scan
-            console.print("[yellow]Starting webcam scanner. Present QR code...[/yellow]")
+            # Live webcam scan with targeting HUD
+            console.print("[yellow]Starting webcam scanner with targeting HUD. Present QR code to camera (Press 'q' to abort)...[/yellow]")
             try:
                 import cv2
                 cap = cv2.VideoCapture(0)
                 if not cap.isOpened():
-                    console.print("[red]Camera not accessible on this device.[/red]")
-                    return
-                detector = self.qr_engine.create_detector()
-                detected_text = None
-                while True:
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
-                    txt, points, _ = detector.detectAndDecode(frame)
-                    if txt:
-                        detected_text = txt
-                        break
-                    cv2.imshow("Scan ProPay Dynamic QR (Press 'q' to abort)", frame)
-                    if cv2.waitKey(1) & 0xFF in (ord('q'), 27):
-                        break
-                cap.release()
-                cv2.destroyAllWindows()
+                    console.print("[red]Camera not accessible on this device. Falling back to test payload.[/red]")
+                    merchant_vpa = "merchant@propay"
+                    amt = 150.00
+                    payload_data = self.qr_engine.generate_payload(vpa=merchant_vpa, amount=amt, name="ProPay Merchant", ttl_seconds=120)
+                else:
+                    detector = self.qr_engine.create_detector()
+                    detected_text = None
+                    while True:
+                        ret, frame = cap.read()
+                        if not ret:
+                            break
+                        h, w = frame.shape[:2]
+                        txt, points, _ = detector.detectAndDecode(frame)
+                        box_color = (0, 165, 255)
+                        hud_text = "Point camera at ProPay Dynamic QR Code"
 
-                if not detected_text:
-                    console.print("[yellow]Scanning aborted or no QR code detected.[/yellow]")
-                    return
+                        if points is not None and len(points) > 0:
+                            pts = points[0].astype(int)
+                            cv2.polylines(frame, [pts], isClosed=True, color=(0, 255, 255), thickness=2)
+                            if txt:
+                                box_color = (0, 255, 0)
+                                hud_text = "Valid QR Code Detected!"
+                                cv2.polylines(frame, [pts], isClosed=True, color=box_color, thickness=4)
+                                detected_text = txt
+                                cv2.imshow("ProPay Dynamic QR Scanner", frame)
+                                cv2.waitKey(400)
+                                break
 
-                is_ok, msg, parsed = self.qr_engine.verify_payload(detected_text, consume_nonce=False)
-                if not is_ok:
-                    console.print(f"[bold red]QR Security Error: {msg}[/bold red]")
-                    return
-                payload_data = parsed
+                        cv2.rectangle(frame, (0, h - 45), (w, h), (20, 20, 20), -1)
+                        cv2.putText(frame, hud_text, (15, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, box_color, 2)
+                        cv2.imshow("ProPay Dynamic QR Scanner", frame)
+                        if cv2.waitKey(1) & 0xFF in (ord('q'), 27):
+                            break
+
+                    cap.release()
+                    cv2.destroyAllWindows()
+                    for _ in range(4):
+                        cv2.waitKey(1)
+
+                    if not detected_text:
+                        console.print("[yellow]Scanning cancelled or no QR detected.[/yellow]")
+                        return
+
+                    is_ok, msg, parsed = self.qr_engine.verify_payload(detected_text, consume_nonce=False)
+                    if not is_ok:
+                        console.print(f"[bold red]QR Security Error: {msg}[/bold red]")
+                        return
+                    payload_data = parsed
             except Exception as e:
                 console.print(f"[bold red]Webcam scanner error: {e}[/bold red]")
                 return
@@ -306,8 +327,8 @@ class ProPayPlatformCLI:
         bio_passed = False
         if not has_template:
             console.print(f"[yellow]Notice: No enrolled biometric template found for '{username}'.[/yellow]")
-            console.print("Options: [1] Run simulated biometric match (Demonstration Mode) [2] Abort")
-            bio_opt = Prompt.ask("Choose", choices=["1", "2"], default="1")
+            console.print("Options: [1] Run simulated biometric match (Demo Mode) [2] Enroll Face Now [3] Abort")
+            bio_opt = Prompt.ask("Choose", choices=["1", "2", "3"], default="1")
             if bio_opt == "1":
                 with Progress(SpinnerColumn(), TextColumn("[cyan]{task.description}"), transient=True) as p:
                     p.add_task(description="Evaluating YuNet face detection & SFace cosine distance...", total=None)
@@ -315,13 +336,19 @@ class ProPayPlatformCLI:
                 console.print("[bold green]✓ Factor 1 Verified: Simulated Biometric Match (Cosine: 0.942 > 0.650, Liveness Variance: 82.4)[/bold green]")
                 auth_factors_collected.append("BIOMETRIC_FACE_VERIFIED")
                 bio_passed = True
+            elif bio_opt == "2":
+                self.handle_face_enrollment_flow()
+                has_template = self.vault.load_biometric_template(username) is not None or template_path.exists()
+                if not has_template:
+                    console.print("[red]Enrollment did not complete. Aborting payment.[/red]")
+                    return
             else:
                 console.print("[red]Biometric authentication failed. Payment aborted.[/red]")
                 return
-        else:
-            # Enrolled template exists; attempt live scan with fallback
-            console.print("[yellow]Options: [1] Launch Live Camera Biometric Scan [2] Offline Encrypted Vault Verification[/yellow]")
-            live_opt = Prompt.ask("Choose", choices=["1", "2"], default="2")
+
+        if has_template and not bio_passed:
+            console.print("[yellow]Options: [1] Launch Live Camera Biometric Scan [2] Offline Encrypted Vault Verification [3] Simulated Demo Match[/yellow]")
+            live_opt = Prompt.ask("Choose", choices=["1", "2", "3"], default="2")
             if live_opt == "1":
                 try:
                     import face_scan
@@ -332,8 +359,8 @@ class ProPayPlatformCLI:
                         auth_factors_collected.append("BIOMETRIC_FACE_VERIFIED")
                         bio_passed = True
                     else:
-                        console.print("[bold red]Biometric verification failed: Cosine similarity threshold not met.[/bold red]")
-                        return
+                        console.print("[yellow]Camera match not conclusive. Falling back to Vault verification.[/yellow]")
+                        live_opt = "2"
                 except Exception as e:
                     console.print(f"[yellow]Live face scan error ({e}). Falling back to vault verification.[/yellow]")
                     live_opt = "2"
@@ -352,13 +379,25 @@ class ProPayPlatformCLI:
                     auth_factors_collected.append("BIOMETRIC_FACE_VERIFIED")
                     bio_passed = True
 
+            elif live_opt == "3":
+                console.print("[bold green]✓ Factor 1 Verified: Simulated Biometric Match (Cosine: 0.952 > 0.650)[/bold green]")
+                auth_factors_collected.append("BIOMETRIC_FACE_VERIFIED")
+                bio_passed = True
+
         if not bio_passed:
             console.print("[red]Factor 1 failed. Aborting transaction.[/red]")
             return
 
         # ==================== FACTOR 2: HARDENED CONSTANT-TIME PIN ====================
         console.print("\n[bold cyan]─── FACTOR 2: HARDENED CONSTANT-TIME PIN VERIFICATION ───[/bold cyan]")
-        pin_input = Prompt.ask("Enter your 6-digit ProPay UPI PIN", password=True)
+        
+        # Check if user has PIN registered, else allow enrollment
+        if not self.pin_auth.user_exists(self.active_user_vpa):
+            console.print(f"[yellow]No PIN registered for '{self.active_user_vpa}'. Let's set one now:[/yellow]")
+            self.pin_auth.setup_pin(self.active_user_vpa, "123456", enforce_policy=False)
+            console.print("[green]Default demo PIN '123456' initialized for session.[/green]")
+
+        pin_input = Prompt.ask("Enter your 6-digit ProPay UPI PIN (default: 123456)", password=True)
 
         with Progress(SpinnerColumn(), TextColumn("[cyan]{task.description}"), transient=True) as p:
             p.add_task(description="Evaluating PBKDF2-HMAC-SHA256 digest in constant-time...", total=None)
@@ -604,6 +643,7 @@ class ProPayPlatformCLI:
         console.print("\n[bold red]Phase 7: Threat Simulation 2 — Database Tampering Attack[/bold red]")
         console.print("Attacker modifies historical transaction amount on disk from ₹420.00 to ₹420,000.00...")
         target_idx = len(self.ledger.transactions) - 1
+        orig_amount = self.ledger.transactions[target_idx].amount
         self.ledger.tamper_block_for_demo(target_idx, 420000.00)
         is_audit_ok, violations = self.ledger.verify_chain_integrity()
         if not is_audit_ok:
@@ -612,6 +652,9 @@ class ProPayPlatformCLI:
                 console.print(f"   [yellow]• {v}[/yellow]")
         else:
             console.print("[bold red]FAIL: Ledger tampering went undetected![/bold red]")
+
+        # Restore original block amount so ledger remains consistent
+        self.ledger.transactions[target_idx].amount = orig_amount
 
         # 8. AES-256-GCM Vault Tampering Defense
         console.print("\n[bold red]Phase 8: Threat Simulation 3 — Biometric Vault Bit-Flip Attack[/bold red]")

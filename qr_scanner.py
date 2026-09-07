@@ -63,8 +63,8 @@ class KeyManager:
     """
 
     def __init__(self, key_path: Path = DEFAULT_KEY_FILE):
-        self.key_path = key_path
-        ensure_data_directories()
+        self.key_path = Path(key_path)
+        self.key_path.parent.mkdir(parents=True, exist_ok=True)
 
     def get_or_create_hmac_key(self) -> bytes:
         """Retrieves existing HMAC secret key or generates a new 256-bit CSPRNG key, synchronized with CryptoVault."""
@@ -91,6 +91,7 @@ class KeyManager:
             try:
                 vault_key = vault.load_secret("qr_hmac_key")
                 if vault_key and len(vault_key) >= 32:
+                    self.key_path.parent.mkdir(parents=True, exist_ok=True)
                     with open(self.key_path, "wb") as f:
                         f.write(vault_key)
                     return vault_key
@@ -99,6 +100,7 @@ class KeyManager:
 
         # Generate fresh 256-bit key
         new_key = secrets.token_bytes(32)
+        self.key_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.key_path, "wb") as f:
             f.write(new_key)
         if vault:
@@ -116,8 +118,8 @@ class NonceManager:
     """
 
     def __init__(self, cache_file: Path = NONCE_CACHE_FILE):
-        self.cache_file = cache_file
-        ensure_data_directories()
+        self.cache_file = Path(cache_file)
+        self.cache_file.parent.mkdir(parents=True, exist_ok=True)
 
     def _load_nonces(self) -> Dict[str, int]:
         """Loads nonces mapping nonce -> expiry_timestamp."""
