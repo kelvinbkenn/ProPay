@@ -220,4 +220,8 @@ __marimo__/
 # ProPay local runtime data, keys & nonces
 data/keys/
 data/used_nonces.json
+data/credentials/
+data/ledger.json
+data/*.tmp
+data/qr_exports/
 *.key
