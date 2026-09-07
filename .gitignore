@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ProPay local runtime data, keys & nonces
+data/keys/
+data/used_nonces.json
+*.key
