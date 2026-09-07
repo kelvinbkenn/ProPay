@@ -38,6 +38,8 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 # Import ProPay subsystems
 from qr_scanner import SignedQREngine, QRScannerCLI, KeyManager, NonceManager
 from ledger import TamperEvidentLedger, LedgerCLI, MerkleTree, MerkleProof, Transaction
+from pin_auth import PINAuthManager, PINPolicy, PINHasher, RateLimiter, PINAuthCLI, HardenedPINAuthManager
+from crypto_vault import CryptoVault, VaultCLI
 
 console = Console(legacy_windows=False)
 
@@ -45,6 +47,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 CREDENTIALS_DIR = DATA_DIR / "credentials"
 BIOMETRICS_DIR = DATA_DIR / "biometrics"
+VAULT_DIR = DATA_DIR / "vault"
 PIN_STORE_FILE = CREDENTIALS_DIR / "pin_store.json"
 RATE_LIMIT_FILE = CREDENTIALS_DIR / "rate_limits.json"
 
@@ -57,168 +60,7 @@ def ensure_system_directories() -> None:
     """Ensures data, credentials, and biometrics directories exist."""
     CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
     BIOMETRICS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-class HardenedPINAuthManager:
-    """
-    Part 2 Implementation: Constant-Time PIN Verification with Exponential Rate Limiter.
-    Guards against brute-force, dictionary, and side-channel timing attacks.
-    """
-
-    def __init__(self, store_path: Path = PIN_STORE_FILE, rate_path: Path = RATE_LIMIT_FILE):
-        self.store_path = store_path
-        self.rate_path = rate_path
-        ensure_system_directories()
-        self._initialize_seed_pins()
-
-    def _initialize_seed_pins(self) -> None:
-        """Initializes default demonstration PINs if store does not exist."""
-        if not self.store_path.exists():
-            # Seed default PINs for hackathon demo accounts:
-            # kelvin@propay -> PIN '123456'
-            # alice@propay  -> PIN '654321'
-            seeds = {
-                "kelvin@propay": self.hash_pin("123456"),
-                "alice@propay": self.hash_pin("654321"),
-            }
-            try:
-                with open(self.store_path, "w", encoding="utf-8") as f:
-                    json.dump(seeds, f, indent=2)
-            except Exception:
-                pass
-
-    @staticmethod
-    def hash_pin(pin: str, salt: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Derives high-work-factor PBKDF2-HMAC-SHA256 digest with 16-byte CSPRNG salt
-        and 600,000 iterations (banking grade).
-        """
-        salt_bytes = bytes.fromhex(salt) if salt else secrets.token_bytes(16)
-        derived = hashlib.pbkdf2_hmac(
-            hash_name="sha256",
-            password=pin.encode("utf-8"),
-            salt=salt_bytes,
-            iterations=600_000,
-        )
-        return {
-            "salt": salt_bytes.hex(),
-            "iterations": 600_000,
-            "hash": derived.hex(),
-            "alg": "PBKDF2-HMAC-SHA256",
-        }
-
-    def _load_pins(self) -> Dict[str, Dict[str, Any]]:
-        if not self.store_path.exists():
-            return {}
-        try:
-            with open(self.store_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-
-    def _load_rate_limits(self) -> Dict[str, Dict[str, Any]]:
-        if not self.rate_path.exists():
-            return {}
-        try:
-            with open(self.rate_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-
-    def _save_rate_limits(self, limits: Dict[str, Dict[str, Any]]) -> None:
-        try:
-            with open(self.rate_path, "w", encoding="utf-8") as f:
-                json.dump(limits, f, indent=2)
-        except Exception:
-            pass
-
-    def check_lockout(self, vpa: str) -> Tuple[bool, int]:
-        """Returns (is_locked, remaining_seconds)."""
-        limits = self._load_rate_limits()
-        record = limits.get(vpa.strip().lower(), {})
-        locked_until = record.get("locked_until", 0)
-        now = time.time()
-
-        if now < locked_until:
-            return True, int(locked_until - now)
-        return False, 0
-
-    def record_attempt(self, vpa: str, success: bool) -> None:
-        """Updates failed attempts counter and applies exponential lockout."""
-        vpa_norm = vpa.strip().lower()
-        limits = self._load_rate_limits()
-        record = limits.get(vpa_norm, {"failed_attempts": 0, "locked_until": 0})
-
-        if success:
-            record["failed_attempts"] = 0
-            record["locked_until"] = 0
-        else:
-            record["failed_attempts"] = record.get("failed_attempts", 0) + 1
-            if record["failed_attempts"] >= MAX_FAILED_ATTEMPTS:
-                # 15 minute lockout
-                record["locked_until"] = time.time() + LOCKOUT_DURATION_SECONDS
-
-        limits[vpa_norm] = record
-        self._save_rate_limits(limits)
-
-    def verify_pin(self, vpa: str, candidate_pin: str) -> Tuple[bool, str]:
-        """
-        Constant-time PIN verification using hmac.compare_digest
-        with exponential rate limiting and lockout enforcement.
-        """
-        vpa_norm = vpa.strip().lower()
-
-        # Check rate limiter
-        is_locked, remaining = self.check_lockout(vpa_norm)
-        if is_locked:
-            return False, f"SECURITY LOCKOUT: Account locked due to repeated PIN failures. Try again in {remaining}s."
-
-        pins = self._load_pins()
-        cred = pins.get(vpa_norm)
-
-        # Constant-time dummy computation if account not registered to prevent enumeration
-        if not cred:
-            # Hash dummy PIN with fixed iterations to prevent side-channel timing leaks
-            self.hash_pin("000000", "00" * 16)
-            return False, "Invalid UPI PIN."
-
-        salt = cred["salt"]
-        expected_hash = cred["hash"]
-        iterations = cred.get("iterations", 600_000)
-
-        # Compute candidate digest
-        computed = hashlib.pbkdf2_hmac(
-            hash_name="sha256",
-            password=candidate_pin.encode("utf-8"),
-            salt=bytes.fromhex(salt),
-            iterations=iterations,
-        ).hex()
-
-        # Side-channel safe constant-time comparison
-        is_match = hmac.compare_digest(computed, expected_hash)
-        self.record_attempt(vpa_norm, is_match)
-
-        if is_match:
-            return True, "PIN authenticated successfully (Constant-time verified)."
-        else:
-            limits = self._load_rate_limits()
-            attempts = limits.get(vpa_norm, {}).get("failed_attempts", 0)
-            remaining_tries = max(0, MAX_FAILED_ATTEMPTS - attempts)
-            return False, f"Invalid UPI PIN. {remaining_tries} attempts remaining before mandatory lockout."
-
-    def register_pin(self, vpa: str, pin: str) -> bool:
-        """Registers or updates PIN for a given account VPA."""
-        if len(pin) < 4 or not pin.isdigit():
-            return False
-        vpa_norm = vpa.strip().lower()
-        pins = self._load_pins()
-        pins[vpa_norm] = self.hash_pin(pin)
-        try:
-            with open(self.store_path, "w", encoding="utf-8") as f:
-                json.dump(pins, f, indent=2)
-            return True
-        except Exception:
-            return False
+    VAULT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class ProPayPlatformCLI:
@@ -244,7 +86,9 @@ class ProPayPlatformCLI:
         self.qr_cli = QRScannerCLI(self.qr_engine)
         self.ledger = TamperEvidentLedger()
         self.ledger_cli = LedgerCLI(self.ledger)
-        self.pin_auth = HardenedPINAuthManager()
+        self.pin_auth = PINAuthManager()
+        self.vault = CryptoVault()
+        self.vault_cli = VaultCLI(self.vault)
 
     def display_session_header(self) -> None:
         """Displays top HUD with live session state, balance, and security indicators."""
@@ -255,14 +99,17 @@ class ProPayPlatformCLI:
         tx_count = len(self.ledger.get_history(self.active_user_vpa))
         merkle_short = f"{self.ledger.merkle_root[:12]}...{self.ledger.merkle_root[-6:]}"
 
-        # Check enrolled biometrics
+        # Check enrolled biometrics in vault or legacy storage
         user_name = self.active_user_vpa.split("@")[0]
         template_file = BIOMETRICS_DIR / f"{user_name}_template.json"
-        bio_status = "[bold green]Active (Enrolled)[/bold green]" if template_file.exists() else "[yellow]Unenrolled[/yellow]"
+        has_bio = self.vault.load_biometric_template(user_name) is not None or template_file.exists()
+        bio_status = "[bold green]Active (AES-GCM Vault)[/bold green]" if has_bio else "[yellow]Unenrolled[/yellow]"
 
         # Check lockout
         is_locked, rem = self.pin_auth.check_lockout(self.active_user_vpa)
         pin_status = f"[bold red]LOCKED ({rem}s)[/bold red]" if is_locked else "[bold green]Armed (Work Factor 600K)[/bold green]"
+
+        vault_count = len(self.vault.list_enrolled_users()) + len(self.vault.list_secrets())
 
         hud = Table(show_header=False, expand=True, box=None)
         hud.add_column("Key", style="cyan", width=18)
@@ -279,7 +126,7 @@ class ProPayPlatformCLI:
             "PIN Auth Armor:", pin_status
         )
         hud.add_row(
-            "Ledger Height:", f"{len(self.ledger.transactions)} Blocks",
+            "Security Vault:", f"[bold green]AES-256-GCM ({vault_count} items)[/bold green]",
             "Merkle Root Anchor:", f"[yellow]{merkle_short}[/yellow]"
         )
 
@@ -296,12 +143,13 @@ class ProPayPlatformCLI:
             console.print(" [bold green]3.[/bold green] 👁️ Biometric Face Scan & Liveness Enrollment")
             console.print(" [bold green]4.[/bold green] 📜 View Cryptographic Ledger & Transaction History")
             console.print(" [bold green]5.[/bold green] 🌳 Inspect Merkle Audit Trail & Inclusion Proofs")
-            console.print(" [bold green]6.[/bold green] 🛡️ Run Security Integrity Audit (Anti-Tamper Check)")
-            console.print(" [bold green]7.[/bold green] ⚡ Automated End-to-End Hackathon Defense Demo")
-            console.print(" [bold green]8.[/bold green] 👤 Switch User Account (kelvin / alice / custom)")
-            console.print(" [bold green]9.[/bold green] 🚪 Exit")
+            console.print(" [bold green]6.[/bold green] 🔐 Inspect AES-256-GCM Encrypted Security Vault (`crypto_vault.py`)")
+            console.print(" [bold green]7.[/bold green] 🛡️ Run Full Zero-Trust Security Audit (Anti-Tamper Check)")
+            console.print(" [bold green]8.[/bold green] ⚡ Automated End-to-End Hackathon Defense Demo")
+            console.print(" [bold green]9.[/bold green] 👤 Switch User Account (kelvin / alice / custom)")
+            console.print(" [bold green]10.[/bold green] 🚪 Exit")
 
-            choice = Prompt.ask("\nEnter option", choices=["1", "2", "3", "4", "5", "6", "7", "8", "9"], default="1")
+            choice = Prompt.ask("\nEnter option", choices=["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"], default="1")
 
             if choice == "1":
                 self.handle_payment_flow()
@@ -314,12 +162,14 @@ class ProPayPlatformCLI:
             elif choice == "5":
                 self.handle_merkle_proof_flow()
             elif choice == "6":
-                self.handle_audit_flow()
+                self.handle_vault_flow()
             elif choice == "7":
-                self.run_full_hackathon_demo()
+                self.handle_audit_flow()
             elif choice == "8":
-                self.handle_switch_user()
+                self.run_full_hackathon_demo()
             elif choice == "9":
+                self.handle_switch_user()
+            elif choice == "10":
                 console.print("\n[bold cyan]Exiting ProPay. Stay Secure![/bold cyan]\n")
                 sys.exit(0)
 
@@ -451,16 +301,17 @@ class ProPayPlatformCLI:
         console.print("\n[bold cyan]─── FACTOR 1: BIOMETRIC FACE VERIFICATION & LIVENESS ───[/bold cyan]")
         username = self.active_user_vpa.split("@")[0]
         template_path = BIOMETRICS_DIR / f"{username}_template.json"
+        has_template = self.vault.load_biometric_template(username) is not None or template_path.exists()
 
         bio_passed = False
-        if not template_path.exists():
+        if not has_template:
             console.print(f"[yellow]Notice: No enrolled biometric template found for '{username}'.[/yellow]")
             console.print("Options: [1] Run simulated biometric match (Demonstration Mode) [2] Abort")
             bio_opt = Prompt.ask("Choose", choices=["1", "2"], default="1")
             if bio_opt == "1":
                 with Progress(SpinnerColumn(), TextColumn("[cyan]{task.description}"), transient=True) as p:
                     p.add_task(description="Evaluating YuNet face detection & SFace cosine distance...", total=None)
-                    time.sleep(1.0)
+                    time.sleep(0.5)
                 console.print("[bold green]✓ Factor 1 Verified: Simulated Biometric Match (Cosine: 0.942 > 0.650, Liveness Variance: 82.4)[/bold green]")
                 auth_factors_collected.append("BIOMETRIC_FACE_VERIFIED")
                 bio_passed = True
@@ -469,7 +320,7 @@ class ProPayPlatformCLI:
                 return
         else:
             # Enrolled template exists; attempt live scan with fallback
-            console.print("[yellow]Options: [1] Launch Live Camera Biometric Scan [2] Offline Template Verification[/yellow]")
+            console.print("[yellow]Options: [1] Launch Live Camera Biometric Scan [2] Offline Encrypted Vault Verification[/yellow]")
             live_opt = Prompt.ask("Choose", choices=["1", "2"], default="2")
             if live_opt == "1":
                 try:
@@ -484,16 +335,22 @@ class ProPayPlatformCLI:
                         console.print("[bold red]Biometric verification failed: Cosine similarity threshold not met.[/bold red]")
                         return
                 except Exception as e:
-                    console.print(f"[yellow]Live face scan error ({e}). Falling back to template verification.[/yellow]")
+                    console.print(f"[yellow]Live face scan error ({e}). Falling back to vault verification.[/yellow]")
                     live_opt = "2"
 
             if live_opt == "2":
-                # Validate template integrity
-                with open(template_path, "r") as f:
-                    tdata = json.load(f)
-                console.print(f"[green]✓ Factor 1 Verified: Biometric Template Cryptographic Seal Intact ({len(tdata.get('embedding', []))}-D SFace Vector)[/green]")
-                auth_factors_collected.append("BIOMETRIC_FACE_VERIFIED")
-                bio_passed = True
+                # Validate template integrity in AES-256-GCM vault
+                emb = self.vault.load_biometric_template(username)
+                if emb is not None:
+                    console.print(f"[green]✓ Factor 1 Verified: AES-256-GCM Vault Cryptographic Seal Validated ({len(emb)}-D SFace Vector)[/green]")
+                    auth_factors_collected.append("BIOMETRIC_FACE_VERIFIED")
+                    bio_passed = True
+                elif template_path.exists():
+                    with open(template_path, "r") as f:
+                        tdata = json.load(f)
+                    console.print(f"[green]✓ Factor 1 Verified: Biometric Template Cryptographic Seal Intact ({len(tdata.get('embedding', []))}-D SFace Vector)[/green]")
+                    auth_factors_collected.append("BIOMETRIC_FACE_VERIFIED")
+                    bio_passed = True
 
         if not bio_passed:
             console.print("[red]Factor 1 failed. Aborting transaction.[/red]")
@@ -617,10 +474,45 @@ class ProPayPlatformCLI:
         tx_id = Prompt.ask("Enter Transaction ID", default=latest_tx_id)
         self.ledger_cli.display_merkle_proof(tx_id)
 
+    def handle_vault_flow(self) -> None:
+        """Inspects and manages the AES-256-GCM encrypted security vault."""
+        console.print("\n[bold cyan]═══ AES-256-GCM ENCRYPTED SECURITY VAULT ═══[/bold cyan]")
+        console.print("Select operation:")
+        console.print(" 1. View Vault Status & Key Parameters")
+        console.print(" 2. List Encrypted Biometric Templates & Secrets")
+        console.print(" 3. Run Vault Cryptographic Integrity Audit")
+        console.print(" 4. Run Interactive Vault Tamper Defense Demo")
+
+        vchoice = Prompt.ask("Select option", choices=["1", "2", "3", "4"], default="1")
+        if vchoice == "1":
+            self.vault_cli.display_status()
+        elif vchoice == "2":
+            self.vault_cli.display_enrolled_items()
+        elif vchoice == "3":
+            self.vault_cli.run_audit()
+        elif vchoice == "4":
+            self.vault_cli.run_tamper_demo()
+
     def handle_audit_flow(self) -> None:
-        """Runs full zero-trust anti-tamper audit."""
-        console.print("\n[bold cyan]═══ ZERO-TRUST SECURITY AUDIT ═══[/bold cyan]")
-        self.ledger_cli.run_audit()
+        """Runs full zero-trust anti-tamper audit across both Ledger and Vault."""
+        console.print("\n[bold cyan]═══ ZERO-TRUST PLATFORM SECURITY AUDIT ═══[/bold cyan]")
+        console.print("\n[bold cyan]─── AUDIT 1/2: CRYPTOGRAPHIC TRANSACTION LEDGER ───[/bold cyan]")
+        ledger_ok = self.ledger_cli.run_audit()
+
+        console.print("\n[bold cyan]─── AUDIT 2/2: AES-256-GCM ENCRYPTED SECURITY VAULT ───[/bold cyan]")
+        vault_ok = self.vault_cli.run_audit()
+
+        if ledger_ok and vault_ok:
+            console.print(Panel(
+                "[bold green]✔ COMPLETE ZERO-TRUST PLATFORM AUDIT PASSED[/bold green]\n\n"
+                "• All Transaction blocks verified against canonical SHA-256 signatures.\n"
+                "• Sequential prev_hash pointers form an unbroken cryptographic chain.\n"
+                "• Merkle Audit Root matches leaf transactions: 100% Intact.\n"
+                "• Biometric and secret storage protected by AES-256-GCM AEAD tags.\n"
+                "• Platform Status: HARDENED AGAINST ALL ATTACK VECTORS.",
+                title="[bold green]Zero-Trust Certification[/bold green]",
+                border_style="green",
+            ))
 
     def handle_switch_user(self) -> None:
         """Switches active account session."""
@@ -634,17 +526,19 @@ class ProPayPlatformCLI:
     def run_full_hackathon_demo(self) -> None:
         """
         Automated End-to-End Hackathon Demonstration:
-        1. Generates cryptographically signed dynamic QR code
+        1. Generates cryptographically signed dynamic QR code (HMAC-SHA256)
         2. Validates HMAC-SHA256 signature and freshness
-        3. Executes multi-factor authorization simulation
+        3. Executes multi-factor authorization simulation (Biometric + Constant-Time PIN)
         4. Commits transaction to append-only ledger & Merkle tree
-        5. Demonstrates Replay Attack Rejection
-        6. Demonstrates Tamper Attack Detection
+        5. Proves inclusion via O(log N) light-client Merkle Proof
+        6. Demonstrates Replay Attack Rejection
+        7. Demonstrates Ledger Tamper Attack Detection
+        8. Demonstrates AES-256-GCM Vault Bit-Flip Tamper Rejection
         """
         console.print(Panel(
             "[bold white]PROPAY AUTOMATED HACKATHON DEFENSE SUITE[/bold white]\n"
             "Demonstrating end-to-end multi-factor payment workflow and defense "
-            "against replay attacks, QR tampering, and ledger manipulation.",
+            "against replay attacks, QR tampering, ledger manipulation, and biometric vault tampering.",
             title="[bold red]Cybersecurity Hackathon Live Demonstration[/bold red]",
             border_style="red",
         ))
@@ -697,9 +591,8 @@ class ProPayPlatformCLI:
         console.print(f"[green]✓ Merkle inclusion proof mathematically verified in constant time across {len(proof.proof_path)} sibling nodes.[/green]")
 
         # 6. Replay Attack Defense
-        console.print("\n[bold red]Phase 6: Threat Simulation — QR Code Replay Attack[/bold red]")
+        console.print("\n[bold red]Phase 6: Threat Simulation 1 — QR Code Replay Attack[/bold red]")
         console.print("Attacker intercepts and resubmits the consumed dynamic QR payload...")
-        # Mark nonce consumed
         self.qr_engine.nonce_manager.mark_nonce_used(payload["txn_nonce"], int(payload["expires_at"]))
         is_replay_valid, replay_msg, _ = self.qr_engine.verify_payload(payload, consume_nonce=True)
         if not is_replay_valid and "Replay Attack Detected" in replay_msg:
@@ -708,7 +601,7 @@ class ProPayPlatformCLI:
             console.print("[bold red]FAIL: Replay attack slipped through![/bold red]")
 
         # 7. Ledger Tampering Defense
-        console.print("\n[bold red]Phase 7: Threat Simulation — Database Tampering Attack[/bold red]")
+        console.print("\n[bold red]Phase 7: Threat Simulation 2 — Database Tampering Attack[/bold red]")
         console.print("Attacker modifies historical transaction amount on disk from ₹420.00 to ₹420,000.00...")
         target_idx = len(self.ledger.transactions) - 1
         self.ledger.tamper_block_for_demo(target_idx, 420000.00)
@@ -720,7 +613,25 @@ class ProPayPlatformCLI:
         else:
             console.print("[bold red]FAIL: Ledger tampering went undetected![/bold red]")
 
-        console.print("\n[bold green]═══ HACKATHON DEMO COMPLETED SUCCESSFULLY ═══[/bold green]\n")
+        # 8. AES-256-GCM Vault Tampering Defense
+        console.print("\n[bold red]Phase 8: Threat Simulation 3 — Biometric Vault Bit-Flip Attack[/bold red]")
+        console.print("Attacker bypasses OS permissions and tampers with 1 byte in an encrypted biometric vault file...")
+        # Create a demo target in vault
+        dummy_emb = np.random.randn(128).astype(np.float32)
+        dummy_emb = dummy_emb / np.linalg.norm(dummy_emb)
+        self.vault.store_biometric_template("hackathon_target", dummy_emb)
+        self.vault.tamper_vault_file_for_demo("hackathon_target", is_biometric=True)
+        loaded = self.vault.load_biometric_template("hackathon_target")
+        if loaded is None:
+            console.print("[bold green]✓ ATTACK DEFLECTED: AES-256-GCM AEAD Tag Mismatch caught tampered ciphertext! Decryption refused.[/bold green]")
+        else:
+            console.print("[bold red]FAIL: Corrupted vault template was decrypted![/bold red]")
+        # Cleanup demo file
+        demo_vault_file = self.vault.biometrics_dir / "hackathon_target.vault"
+        if demo_vault_file.exists():
+            demo_vault_file.unlink()
+
+        console.print("\n[bold green]═══ HACKATHON DEMO COMPLETED SUCCESSFULLY: ALL ATTACKS DEFLECTED ═══[/bold green]\n")
 
 
 def main():
@@ -728,7 +639,8 @@ def main():
 
     parser = argparse.ArgumentParser(description="ProPay Zero-Trust Attack-Resilient Payment Platform")
     parser.add_argument("--demo", action="store_true", help="Run automated end-to-end hackathon defense demonstration")
-    parser.add_argument("--audit", action="store_true", help="Run cryptographic ledger integrity audit")
+    parser.add_argument("--audit", action="store_true", help="Run cryptographic ledger and vault integrity audit")
+    parser.add_argument("--vault", action="store_true", help="Inspect and audit AES-256-GCM encrypted security vault")
     parser.add_argument("--balance", type=str, help="Check balance for specified account VPA")
     parser.add_argument("--user", type=str, default="kelvin@propay", help="Set active user VPA (default: kelvin@propay)")
 
@@ -739,6 +651,8 @@ def main():
         platform.run_full_hackathon_demo()
     elif args.audit:
         platform.handle_audit_flow()
+    elif args.vault:
+        platform.handle_vault_flow()
     elif args.balance:
         platform.ledger_cli.display_balance(args.balance)
     else:

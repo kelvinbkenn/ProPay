@@ -1,0 +1,15 @@
+{
+  "username": "kelvin@propay",
+  "created_at": 1788806116.237063,
+  "updated_at": 1788806116.2370632,
+  "kdf": "PBKDF2-HMAC-SHA256",
+  "iterations": 600000,
+  "salt_hex": "97589f3bf08629b0f8b4f5bed5805f137acf594c8d5a965854403bcfd6160660",
+  "hash_hex": "b64e3557a71fe05efed9b53248f2dff7ceb6c2601257015c34d18b3c2954449e",
+  "failed_attempts": 0,
+  "lockout_until": 0.0,
+  "last_failed_at": null,
+  "last_success_at": null,
+  "total_failures": 0,
+  "total_successes": 0
+}

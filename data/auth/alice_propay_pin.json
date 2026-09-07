@@ -1,0 +1,15 @@
+{
+  "username": "alice@propay",
+  "created_at": 1788806116.295375,
+  "updated_at": 1788806116.2953756,
+  "kdf": "PBKDF2-HMAC-SHA256",
+  "iterations": 600000,
+  "salt_hex": "fb54a2182d2bf9d78d670475c7a981c87122b3cded8ccac5aeb513482bf96679",
+  "hash_hex": "a9a531555e8fbeb55f090d2a87b7a67ffe8745ac60be210878ef8898e7d686e7",
+  "failed_attempts": 0,
+  "lockout_until": 0.0,
+  "last_failed_at": null,
+  "last_success_at": null,
+  "total_failures": 0,
+  "total_successes": 0
+}

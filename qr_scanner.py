@@ -67,17 +67,45 @@ class KeyManager:
         ensure_data_directories()
 
     def get_or_create_hmac_key(self) -> bytes:
-        """Retrieves existing HMAC secret key or generates a new 256-bit CSPRNG key."""
+        """Retrieves existing HMAC secret key or generates a new 256-bit CSPRNG key, synchronized with CryptoVault."""
+        vault = None
+        try:
+            from crypto_vault import CryptoVault
+            vault = CryptoVault()
+        except Exception:
+            pass
+
         if self.key_path.exists():
             with open(self.key_path, "rb") as f:
                 key = f.read().strip()
                 if len(key) >= 32:
+                    if vault:
+                        try:
+                            if not vault.load_secret("qr_hmac_key"):
+                                vault.store_secret("qr_hmac_key", key)
+                        except Exception:
+                            pass
                     return key
+
+        if vault:
+            try:
+                vault_key = vault.load_secret("qr_hmac_key")
+                if vault_key and len(vault_key) >= 32:
+                    with open(self.key_path, "wb") as f:
+                        f.write(vault_key)
+                    return vault_key
+            except Exception:
+                pass
 
         # Generate fresh 256-bit key
         new_key = secrets.token_bytes(32)
         with open(self.key_path, "wb") as f:
             f.write(new_key)
+        if vault:
+            try:
+                vault.store_secret("qr_hmac_key", new_key)
+            except Exception:
+                pass
         return new_key
 
 

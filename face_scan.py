@@ -29,6 +29,12 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
+try:
+    from crypto_vault import CryptoVault
+    _VAULT_AVAILABLE = True
+except ImportError:
+    _VAULT_AVAILABLE = False
+
 console = Console()
 
 # Base directories
@@ -270,15 +276,16 @@ class FaceEngine:
         return is_match, similarity
 
     # ------------------------------------------------------------------------
-    # Enrolled Templates Storage (Encrypted Vault Integration Prep)
+    # Enrolled Templates Storage (AES-256-GCM Encrypted Vault & JSON Fallback)
     # ------------------------------------------------------------------------
     def save_template(self, username: str, embedding: np.ndarray, metadata: Optional[Dict[str, Any]] = None) -> Path:
-        """Saves enrolled biometric template."""
+        """Saves enrolled biometric template both in encrypted AES-256-GCM vault and JSON store."""
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        template_path = DATA_DIR / f"{username.lower().strip()}_template.json"
+        sanitized = username.lower().strip()
+        template_path = DATA_DIR / f"{sanitized}_template.json"
         
         payload = {
-            "username": username,
+            "username": sanitized,
             "created_at": time.time(),
             "model": "SFace-128D",
             "embedding": embedding.tolist(),
@@ -286,11 +293,30 @@ class FaceEngine:
         }
         with open(template_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
+
+        # Store in AES-256-GCM encrypted vault
+        if _VAULT_AVAILABLE:
+            try:
+                CryptoVault().store_biometric_template(sanitized, embedding, metadata)
+            except Exception as e:
+                console.print(f"[dim yellow]Notice: Vault encryption skipped: {e}[/dim yellow]")
+
         return template_path
 
     def load_template(self, username: str) -> Optional[np.ndarray]:
-        """Loads enrolled biometric template for given user."""
-        template_path = DATA_DIR / f"{username.lower().strip()}_template.json"
+        """Loads enrolled biometric template for given user, prioritizing encrypted vault."""
+        sanitized = username.lower().strip()
+        # 1. Try loading from AES-256-GCM encrypted vault
+        if _VAULT_AVAILABLE:
+            try:
+                emb = CryptoVault().load_biometric_template(sanitized)
+                if emb is not None:
+                    return emb
+            except Exception:
+                pass
+
+        # 2. Fallback to unencrypted JSON template
+        template_path = DATA_DIR / f"{sanitized}_template.json"
         if not template_path.exists():
             return None
         try:
@@ -302,14 +328,30 @@ class FaceEngine:
             return None
 
     def list_enrolled_users(self) -> List[str]:
-        """Returns list of all enrolled usernames."""
-        if not DATA_DIR.exists():
-            return []
-        users = []
-        for file in DATA_DIR.glob("*_template.json"):
-            uname = file.name.replace("_template.json", "")
-            users.append(uname)
-        return sorted(users)
+        """Returns unified list of all enrolled usernames from vault and disk."""
+        users = set()
+        if _VAULT_AVAILABLE:
+            try:
+                users.update(CryptoVault().list_enrolled_users())
+            except Exception:
+                pass
+
+        if DATA_DIR.exists():
+            for file in DATA_DIR.glob("*_template.json"):
+                uname = file.name.replace("_template.json", "")
+                users.add(uname)
+        return sorted(list(users))
+
+    def enroll_user(self, username: str, camera_id: int = 0) -> bool:
+        """Interactive face enrollment helper for unified CLI workflows."""
+        cli = FaceAuthenticatorCLI(self)
+        return cli.enroll_interactive(username)
+
+    def verify_user(self, username: str, camera_id: int = 0) -> Tuple[bool, float]:
+        """Interactive face verification helper with liveness challenge."""
+        cli = FaceAuthenticatorCLI(self)
+        ok, sim, _ = cli.verify_interactive(username)
+        return ok, sim
 
 
 class FaceAuthenticatorCLI:
