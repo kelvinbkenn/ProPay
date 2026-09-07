@@ -180,30 +180,90 @@ Compares two image files and calculates cosine similarity without a live webcam:
 python face_scan.py --verify-files image1.jpg image2.jpg
 ```
 
+### Dynamic QR Operations (`qr_scanner.py`)
+
+#### 1. Generate Signed Dynamic Payment QR
+Generates a tamper-evident, HMAC-SHA256 signed dynamic payment QR with CSPRNG nonce:
+```powershell
+python qr_scanner.py --generate --vpa "merchant@propay" --amount 250.00 --name "Coffee Shop"
+```
+
+#### 2. Live Webcam Dynamic QR Scanner HUD
+Launches live camera HUD with targeting reticle and instant signature/replay validation:
+```powershell
+python qr_scanner.py --scan
+```
+
+---
+
+### Cryptographic Ledger & Merkle Audit (`ledger.py`)
+
+#### 1. List All Chained Blocks
+Displays the full SHA-256 hash-chained ledger and current Merkle root anchor:
+```powershell
+python ledger.py --list
+```
+
+#### 2. Run Cryptographic Integrity Audit
+Recalculates every block's canonical hash and checks sequential chain continuity:
+```powershell
+python ledger.py --verify
+```
+
+#### 3. Inspect Merkle Inclusion Proof
+Generates and mathematically proves inclusion of a specific transaction against the Merkle root:
+```powershell
+python ledger.py --proof TXN-GENESIS-00000000
+```
+
+#### 4. Run Interactive Hackathon Tamper Defense Demo
+Simulates an attacker altering a transaction amount and shows immediate detection:
+```powershell
+python ledger.py --tamper-demo
+```
+
+---
+
+### Unified Payment Orchestrator (`main.py`)
+
+#### 1. Launch Interactive Zero-Trust TUI Dashboard
+Launches the full interactive terminal application integrating all subsystems:
+```powershell
+python main.py
+```
+
+#### 2. Run Automated Hackathon Defense Demonstration
+Simulates an end-to-end multi-factor payment workflow, QR replay attack, and ledger tampering defense:
+```powershell
+python main.py --demo
+```
+
+#### 3. Run Security Audit
+```powershell
+python main.py --audit
+```
+
 ---
 
 ## 🧪 Running Tests
 
-The test suite runs deterministically without requiring a live camera feed:
+Run the full deterministic unit and security test suite:
 
 ```powershell
-python -m unittest tests/test_face_scan.py -v
+python -m unittest discover tests -v
 ```
 
-### Test Coverage Summary:
-- ✅ `test_01_models_loaded`: Validates YuNet detector and SFace recognizer initialization.
-- ✅ `test_02_feature_vector_dimension_and_norm`: Confirms 128-dimensional L2-normalized embedding extraction.
-- ✅ `test_03_cosine_similarity_identity_and_orthogonality`: Verifies cosine similarity mathematical correctness.
-- ✅ `test_04_verification_match_and_impostor_rejection`: Validates separation between genuine samples ($\ge 0.90$) and impostors ($< 0.40$).
-- ✅ `test_05_anti_spoof_blurry_and_blank_rejection`: Rejects zero-variance / blurred presentation attack inputs.
-- ✅ `test_06_template_save_and_load`: Tests biometric template persistence and integrity.
+### Test Coverage Summary (26 Tests Passing):
+- ✅ **Biometric Face Engine (`test_face_scan.py`)**: 6 tests validating YuNet detection, SFace 128-D embeddings, cosine similarity thresholds, passive anti-spoofing blur/blank rejection, and template integrity.
+- ✅ **Dynamic Signed QR (`test_qr_scanner.py`)**: 10 tests validating key persistence, payload HMAC-SHA256 signing, amount tampering rejection, VPA tampering rejection, nonce replay prevention, expiry defense, UTF-8 half-block ASCII rendering, and OpenCV image roundtrip.
+- ✅ **Cryptographic Ledger & Merkle Tree (`test_ledger.py`)**: 10 tests validating Genesis anchor, sequential hash chaining, canonical hash recalculation, broken prev_hash detection, Merkle tree root determinism, O(log N) inclusion proofs, counterfeit proof rejection, balance tracking, overdraft defense, and disk reload integrity.
 
 ---
 
 ## 🗺️ Roadmap
 - [x] **Part 1**: Biometric Face Scan & Liveness Engine (`face_scan.py`)
 - [ ] **Part 2**: Hardened Constant-Time PIN Authentication & Rate Limiter (`pin_auth.py`)
-- [ ] **Part 3**: Cryptographically Signed Dynamic QR Code Generator & Scanner (`qr_scanner.py`)
+- [x] **Part 3**: Cryptographically Signed Dynamic QR Code Generator & Scanner (`qr_scanner.py`)
 - [ ] **Part 4**: AES-256-GCM Encrypted Vault & Key Management (`crypto_vault.py`)
-- [ ] **Part 5**: Cryptographic Transaction Ledger & Merkle Audit Trail (`ledger.py`)
-- [ ] **Part 6**: Unified Interactive Rich CLI Application (`main.py`)
+- [x] **Part 5**: Cryptographic Transaction Ledger & Merkle Audit Trail (`ledger.py`)
+- [x] **Part 6**: Unified Interactive Rich CLI Application (`main.py`)
