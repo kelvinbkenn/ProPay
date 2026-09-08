@@ -3,9 +3,9 @@
 [![Python Version](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.14-blue.svg)](https://python.org)
 [![Security Level](https://img.shields.io/badge/Security-Multi--Factor%20Biometric%20%2B%20PIN-brightgreen.svg)]()
 [![Biometrics](https://img.shields.io/badge/Face%20Engine-YuNet%20%2B%20SFace%20(OpenCV%20DNN)-orange.svg)]()
-[![Platform](https://img.shields.io/badge/Platform-Pure%20CLI-purple.svg)]()
+[![Platform](https://img.shields.io/badge/Platform-Python%20Desktop%20%2B%20CLI-purple.svg)]()
 
-**ProPay** is a hardened, command-line UPI-like payment prototype architected specifically for **cybersecurity hackathons**. It implements zero-trust payment authorization combining **deep neural biometric face verification with active liveness anti-spoofing**, **constant-time salted PIN authentication**, **cryptographically signed dynamic QR codes**, and an **append-only verifiable cryptographic transaction ledger**.
+**ProPay** is a hardened, UPI-like payment prototype architected specifically for **cybersecurity hackathons**. It implements zero-trust payment authorization combining **deep neural biometric face verification with active liveness anti-spoofing**, **constant-time salted PIN authentication**, **cryptographically signed dynamic QR codes**, and an **append-only verifiable cryptographic transaction ledger**. The `UI.py` desktop command center puts those security primitives behind a polished native Python interface—no browser or web server required.
 
 ---
 
@@ -223,6 +223,21 @@ python ledger.py --tamper-demo
 ```
 
 ---
+
+### Native Desktop Command Center (`UI.py`)
+
+Launch the sleek local GUI for the payment engine:
+
+```powershell
+python UI.py
+```
+
+The desktop experience includes:
+- Dashboard with live balance, recent activity, and the four-layer zero-trust security story.
+- Multi-factor payment flow wired to the real ledger and constant-time PIN verifier.
+- HMAC-SHA256 signed dynamic QR generation with nonce and expiry metadata.
+- Cryptographic ledger explorer with sealed transaction receipts.
+- Security center that audits the SHA-256/Merkle chain and AES-256-GCM vault together.
 
 ### Unified Payment Orchestrator (`main.py`)
 
