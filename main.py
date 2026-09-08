@@ -19,6 +19,7 @@ import hashlib
 import secrets
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, List
+import numpy as np
 
 # Windows UTF-8 console output encoding
 if sys.platform == "win32":
