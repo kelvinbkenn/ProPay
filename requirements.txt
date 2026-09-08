@@ -4,3 +4,4 @@ rich>=13.0.0
 cryptography>=41.0.0
 qrcode>=7.4.0
 pillow>=10.0.0
+customtkinter>=5.2.0

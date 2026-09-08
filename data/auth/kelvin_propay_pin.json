@@ -8,8 +8,8 @@
   "hash_hex": "b64e3557a71fe05efed9b53248f2dff7ceb6c2601257015c34d18b3c2954449e",
   "failed_attempts": 0,
   "lockout_until": 0.0,
-  "last_failed_at": null,
-  "last_success_at": null,
-  "total_failures": 0,
-  "total_successes": 0
+  "last_failed_at": 1788831377.0956676,
+  "last_success_at": 1788832158.2599049,
+  "total_failures": 3,
+  "total_successes": 3
 }
